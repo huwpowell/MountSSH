@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+Exec=./mntSSH
+Comment=Mount/Unmount SSH Hosts
+Icon=gnome-fs-nfs
+Name=mntSSH
+GenericName=Mount SSH Hosts as Drives
