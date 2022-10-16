@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+Exec=./mntFS
+Comment=Mount/Unmount remote server volumes
+Icon=gnome-fs-nfs
+Name=mntFS
+GenericName=Mount remote volumes as Drives

@@ -627,7 +627,52 @@ if [ ! -z $_PNAME ] ; then
 fi
 }
 #---------- END select-mountpoint --------
+#---------- check-ssh-key ----------------
+function check-ssh-key ()
+{
+local KEY_IP=$1							# Get the IP Address in question
+local KEY_PORT=$2						# and the port
+local KEY_SSHDIR="./.ssh"					# The .ssh directory path
+local KEY_HOSTS="$KEY_SSHDIR/known_hosts"			# the known-hosts file
+KEY_OPTIONS=""							# Turn ON Key Checking
 
+if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
+	mkdir "$KEY_SSHDIR"					# if not exist then cre8 it
+fi
+
+if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
+	touch "$KEY_HOSTS"					# if not exist cre8 it
+fi
+
+KEY=$(ssh-keyscan -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the Public key from the host
+if [ -z "$KEY" ]; then
+	KEY_OPTIONS=" -oStrictHostKeyChecking=no "		# Turn off Key Checking for this mount
+	zenity	--question --no-wrap \
+		--title="Key for $KEY_IP not found" \
+		--text="The SSH Key for $KEY_IP:$KEY_PORT could not be read\n\nDo you want to try to mount anyway?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+	return $?						# Return Yes/No
+fi
+
+KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
+KEY2SCAN=$(echo "$KEY" | cut -d" " -s -f3)			# extract the actual key
+KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
+
+if [ -n "$KEY_SCANNED" ]; then
+	return 0						# Sucess = key found in known_hosts
+fi
+
+zenity	--question --no-wrap \
+	--title="$KEY_IP is not known" \
+	--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+
+if [ $? = 0 ]; then
+	echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
+fi
+
+return 0						# Attempt to mount			
+
+}
+#---------- END check-ssh-key ------------
 export -f select-mounted select-server find-ssh-servers select-mountpoint 
 
 # ------------------ End functions -------------------------------
@@ -680,7 +725,7 @@ if [ -n "$NOTINSTALLED_MSG" ]; then
  
 	zenity	--error --no-wrap \
 	--title="Missing Dependancies" \
-	--text="$NOTINSTALLED_MSG" \
+	--text="$NOTINSTALLED_MSG"
 
 	exit							# exit and fail to run	
 fi
@@ -954,7 +999,12 @@ if [[ "$IS_MOUNTED" ]] ; then
 	
 	exit 0		#Sucess
 
-else		# Not yet mounted so Proceed to attempt mounting
+else							# Not yet mounted so Proceed to attempt mounting
+
+	check-ssh-key $MNT_IP $_PORT				# See if we know the host
+	if [ $? != "0" ]; then
+		exit 1					# Failed key check so exit and don't attempt mount
+	fi
 
 		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then			# Dont try to create the mount root if mount point is not set correcly
 			if [ ! -d $MOUNT_POINT ]; then
@@ -965,11 +1015,11 @@ else		# Not yet mounted so Proceed to attempt mounting
 if [ -n "$_SSH_OPTIONS" ]; then
 	t_SSH_OPTIONS="-o$_SSH_OPTIONS"		# If there are any options add -o
 fi
-MNT_CMD="sshfs -p $_PORT "$t_SSH_OPTIONS" -o password_stdin,allow_other,default_permissions $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT <<< '$_PASSWORD'"
+MNT_CMD="sshfs -p $_PORT "$t_SSH_OPTIONS" "$KEY_OPTIONS" -opassword_stdin,allow_other,default_permissions $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT <<< '$_PASSWORD'"
 
-echo ..
-echo "$MNT_CMD"
-echo ..
+#echo ..
+#echo "$MNT_CMD"
+
 		show-progress "Mounting" "Attempting to mount $MNT_IP" "$MNT_CMD"
 
 		ERR=$(echo "$SP_RTN" | grep -v "Created symlink")	# Read any error message
