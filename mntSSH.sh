@@ -241,8 +241,7 @@ function select-mounted() {
 				M_PROCEED='no'				# force us to be called again
 									# if anything is unmounted
 			done <<<$VOLS2UMOUNT
-		fi							# endif anything selected to unmount
-
+		fi							# is anything selected to unmount
 	fi								# endif anything mounted
 }
 # ------------ END select-mounted --------------
@@ -322,7 +321,7 @@ function edit-servers() {
 #------------- edit-ports --------------------
 function edit-ports() {
 
-	_NARRATIVE="<span foreground='blue'><b><big>Enter Ports to scan in the format nn nnn nnnn\n\n</big>ie 22 222 2222\n</b>\n\nSeparate the ports with <b>ONE</b> SPACE ( ) \n\nPut all Ports on the same line</span>"
+	_NARRATIVE="<span foreground='blue'><b><big>Enter Ports to scan in the format nn nnn nnnn\n\n</big>ie 22 222 2222\n</b>\n\nSeparate the ports with <b>ONE</b> SPACE ( ) \n\nor Put all Ports on the separate lines</span>"
 	edit-file ports "$_NARRATIVE"
 
 	if [ $DOsave = "Y" ]; then
@@ -337,14 +336,15 @@ function edit-ports() {
 #------------- scan-subnets --------------
 # We scan subnets with nmap. This is slower than arp-scan and could take 30-40 seconds per subnet
 function scan-subnets() {
-
-#look for a .ports file
+local M_PROCEED='no'						# Not yet scanned
+while [ "$M_PROCEED" ]					# Keep going until scan finished
+do
+	#look for a .ports file
 	if [ -f $_PNAME.ports ]; then
-		SCAN_PORTS=$(cat $_PNAME.ports) 
+		SCAN_PORTS=$(cat $_PNAME.ports)
 	fi
 
-# look for subnets file
-
+	# look for subnets file
 	if [ -f $_PNAME.subnets ]; then
 		SCAN_SUBNETS=$(cat $_PNAME.subnets |grep -v $_SUBNET|sort -u ) # remove any current entry for this subnet and select only unique lines (No duplicates)
 	fi
@@ -372,80 +372,82 @@ function scan-subnets() {
 			--button="Scan Selected":2 \
 			<<< "$SCAN_SUBNETS"
 			)
-		case $? in					# $? is the return code
-			0|2) ;;					# zenity/yad returns 0 for OK 2 is Select Button
-			1|70) exit ;;				# Exit Button Selected
-			4) edit-subnets ;scan-subnets;;		# Edit .subnets file restart the scan
-			5) edit-ports ;scan-subnets;;		# Edit .ports file restart the scan
-			-1|252|255) ;;				# Just here to consider any other exit return codes (see zenity and yad documentation)
-		esac
+			case $? in					# $? is the return code
+				0|2) M_PROCEED='' ;;			# zenity/yad returns 0 for OK 2 is Select Button
+				1|70) exit ;;				# Exit Button Selected
 
-		if [ -n "$OUT" ]					# if anything was selected
-			then
-			SCAN_SUBNETS=$(echo "$OUT" \
-			| awk 'BEGIN{FS="|";OFS=""} {print $2;} '  \
-			)						# Select the subnets to scan
+				3) M_PROCEED='' ;;			# Scan aborted ... OK to Proceed
 
-			Stmp_out=$(mktemp --tmpdir `basename $0`.XXXXXXX)	# Somewhere to store output
+				4) edit-subnets ;;			# Edit .subnets file restart loop
+				5) edit-ports ;;			# Edit .ports file restart the loop
+				-1|252|255) ;;				# Just here to consider any other exit return codes (see zenity and yad documentation)
+			esac
 
-			while IFS= read -r S_SN; do
-			show-progress "Scanning" "Finding SSH hosts on $S_SN" \
-			"nmap -oG $Stmp_out --append-output -sn -PS$NC_PORT $S_SN" 	# find out what machines are available on the other subnets
-			done <<<$SCAN_SUBNETS
-	
-			_SUBNET_IPS=$(cat "$Stmp_out" \
-			|sort -u \
-			|grep "Status: Up" \
-			|grep -o -E '([0-9]{1,3}\.){3}[0-9]{1,3}'
-			)
-			rm -f $Stmp_out			# delete temp file after reading content
+			if [ -n "$OUT" ]; then				# if anything was selected
+				SCAN_SUBNETS=$(echo "$OUT" \
+				| awk 'BEGIN{FS="|";OFS=""} {print $2;} '  \
+				)					# Select the subnets to scan
 
-			_SUBNET_SERVERS=""
-
-			for S_IP in $(echo "$_SUBNET_IPS")
-			do
-				for NC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
-					_TMP=$(ping -c 1 -W 2 $S_IP)		# See if the IP is alive
-					if [ $? = "0" ]; then			# If the IP is alive
-						echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing
-						_TMP=$(nc -zvw3 $S_IP $NC_PORT 2>&1)
-						if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH Host
-						then
-							_SUBNET_SERVERS=$(echo -n "$S_IP\n$_SUBNET_SERVERS")
-						fi
-					fi
-				done
-			done> >(zenity --progress --pulsate  --width=250 --auto-close --no-cancel \
-				--title="Scanning for SSH Hosts" \
-				--text="Scanning .." \
-				--percentage=0)					# Track progress on screen
-
-			if [ -n "$_SUBNET_SERVERS" ]; then
-
-				_SUBNET_IPS=$(echo -e "$_SUBNET_SERVERS" \
-				|awk -v sname="Remote Scanned" 'BEGIN{FS=" ";OFS=""} {print $1,",",sname;} ' \
-				)
-
-				_SERVERS_FILE=""
-				if [ -f $_PNAME.servers ]; then # Get all from the existing .servers file
-					_SERVERS_FILE=$(cat $_PNAME.servers)
- 				fi
-				_NEW_SERVERS=$(echo -e "$_SERVERS_FILE\n$_SUBNET_IPS"|sort -u -t "," -k1,1) # remove any duplicates
-				echo "$_NEW_SERVERS"|sed -e '/^$/d'|sort -u -t "," -k1,1 > $_PNAME.servers	# Append IPS found to Servers for later processing, Ignore blank lines
-	
-			fi
-		fi
-	else
-		zenity	--question --no-wrap \
-			--title="No subnets found" \
-			--text="No subnets found in $_PNAME.subnets\n\nEdit the $_PNAME.subnets file\nand try again?"
-		if [ $? = "0" ]
-		then
-			edit-subnets				# edit the subnets file
-			scan-subnets				# call this function again to scan any new subnets
-		fi
+				Stmp_out=$(mktemp --tmpdir `basename $0`.XXXXXXX)	# Somewhere to store output
+				while IFS= read -r S_SN; do
+					show-progress "Scanning" "Finding SSH hosts on $S_SN" \
+					"nmap -oG $Stmp_out --append-output -sn -PS$NC_PORT $S_SN" 	# find out what machines are available on the other subnets
+				done <<<$SCAN_SUBNETS
 		
+				_SUBNET_IPS=$(cat "$Stmp_out" \
+				|sort -u \
+				|grep "Status: Up" \
+				|grep -o -E '([0-9]{1,3}\.){3}[0-9]{1,3}'
+				)
+				rm -f $Stmp_out			# delete temp file after reading content
+
+				_SUBNET_SERVERS=""
+
+				for S_IP in $(echo "$_SUBNET_IPS")
+				do
+					for NC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
+						_TMP=$(ping -c 1 -W 2 $S_IP)		# See if the IP is alive
+						if [ $? = "0" ]; then			# If the IP is alive
+							echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing
+							_TMP=$(nc -zvw3 $S_IP $NC_PORT 2>&1)
+							if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH Host
+							then
+								_SUBNET_SERVERS=$(echo -n "$S_IP\n$_SUBNET_SERVERS")
+							fi
+						fi
+					done
+				done> >(zenity --progress --pulsate  --width=250 --auto-close --no-cancel \
+					--title="Scanning for SSH Hosts" \
+					--text="Scanning .." \
+					--percentage=0)					# Track progress on screen
+				if [ -n "$_SUBNET_SERVERS" ]; then
+
+					_SUBNET_IPS=$(echo -e "$_SUBNET_SERVERS" \
+					|awk -v sname="Remote Scanned" 'BEGIN{FS=" ";OFS=""} {print $1,",",sname;} ' \
+							)
+
+					_SERVERS_FILE=""
+					if [ -f $_PNAME.servers ]; then # Get all from the existing .servers file
+						_SERVERS_FILE=$(cat $_PNAME.servers)
+					fi
+					_NEW_SERVERS=$(echo -e "$_SERVERS_FILE\n$_SUBNET_IPS"|sort -u -t "," -k1,1) # remove any duplicates
+					echo "$_NEW_SERVERS"|sed -e '/^$/d'|sort -u -t "," -k1,1 > $_PNAME.servers	# Append IPS found to Servers for later processing, Ignore blank lines
+		
+				fi
+ 			fi
+		else
+			zenity	--question --no-wrap \
+				--title="No subnets found" \
+				--text="No subnets found in $_PNAME.subnets\n\nEdit the $_PNAME.subnets file\nand try again?"
+			if [ $? = "0" ]
+			then
+				edit-subnets				# edit the subnets file
+			else
+				M_PROCEED=''			# Ignore and leave 
+			fi
+			
 	fi							# end scan subnets
+done
 }
 #------------- END scan-subnets--------------
 #------------- find-ssh-servers --------------
@@ -697,13 +699,13 @@ fi
 
 #2.. Look for sshfs
 
-which sshfs >>/dev/null 2>&1				# see if sshfs is installed
+which sshfs >>/dev/null 2>&1					# see if sshfs is installed
 if [ $? != "0" ]; then
        	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"sshfs\n"		# indicate not installed		
 fi
 
 #3.. Look for nc
-which nc >>/dev/null 2>&1				# see if mount.nfs is installed
+which nc >>/dev/null 2>&1					# see if netcat is installed
 if [ $? != "0" ]; then
        	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"nc\n"		# indicate not installed		
 fi
@@ -774,14 +776,14 @@ fi
 
 	find-ssh-servers					# Find all SSH Server visible
 
-#	First of all .. Present a total list of any mounted servers and give options to umount if required
+#	First of all .. Present a total list of any mounted hosts and give options to umount if required
 	M_PROCEED='no'
 	while [ "$M_PROCEED" ]
 	do
 		select-mounted				# Present a list of currently mounted volumes
 	done						# repeatedly until nothing is mounted or Proceed button selected
 #	Then .. Present a total list of any severs available on the subnet for preliminary selection
-	select-server				# Select a server and share from the selection list (Returns IP|NETBIOSNAME)
+	select-server	# Select a server and share from the selection list (Returns IP|NETBIOSNAME)
 
 		if [ -n "$SP_RTN" ]; then
 			IFS="|" read  _IP _NETBIOSNAME tTail<<< "$SP_RTN"  # tTail picks up any spare seperators
