@@ -646,8 +646,12 @@ if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
 	touch "$KEY_HOSTS"					# if not exist cre8 it
 fi
 
-KEY=$(ssh-keyscan -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the Public key from the host
-if [ -z "$KEY" ]; then
+KEY=$(ssh-keyscan -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+if [ -z "$KEY" ]; then						# If default method doesnt work try dsa
+	KEY=$(ssh-keyscan -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get the dss Public key from the host
+fi
+
+if [ -z "$KEY" ]; then						# If key is still blank, give up trying
 	KEY_OPTIONS=" -oStrictHostKeyChecking=no "		# Turn off Key Checking for this mount
 	zenity	--question --no-wrap \
 		--title="Key for $KEY_IP not found" \
