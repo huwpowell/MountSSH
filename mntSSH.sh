@@ -391,7 +391,7 @@ do
 				Stmp_out=$(mktemp --tmpdir `basename $0`.XXXXXXX)	# Somewhere to store output
 				while IFS= read -r S_SN; do
 					show-progress "Scanning" "Finding SSH hosts on $S_SN" \
-					"nmap -oG $Stmp_out --append-output -sn -PS$NC_PORT $S_SN" 	# find out what machines are available on the other subnets
+					"nmap -n -oG $Stmp_out --append-output -sn -PS$NC_PORT $S_SN" 	# find out what machines are available on the other subnets
 				done <<<$SCAN_SUBNETS
 		
 				_SUBNET_IPS=$(cat "$Stmp_out" \
@@ -409,7 +409,7 @@ do
 						_TMP=$(ping -c 1 -W 2 $S_IP)		# See if the IP is alive
 						if [ $? = "0" ]; then			# If the IP is alive
 							echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing
-							_TMP=$(nc -zvw3 $S_IP $NC_PORT 2>&1)
+							_TMP=$(nc -n -zw1 $S_IP $NC_PORT 2>&1)
 							if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH Host
 							then
 								_SUBNET_SERVERS=$(echo -n "$S_IP\n$_SUBNET_SERVERS")
@@ -493,7 +493,7 @@ echo -e "$_SUBNET\n$_CURRENT_SUBNETS" > $_PNAME.subnets 	# recreate .subnets Add
 		if [ $? = "0" ]; then				# If the IP is Alice
 			for NC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
 				echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing 
-				_TMP=$(nc -zvw3 $S_IP $NC_PORT 2>&1)
+				_TMP=$(nc -n -zw1 $S_IP $NC_PORT 2>&1)
 				if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH host
 				then
 					_SERVERS=$(echo -e "$S_IP:$NC_PORT\n$_SERVERS")
@@ -691,7 +691,8 @@ export -f select-mounted select-server find-ssh-servers select-mountpoint
 # 1. arp-scan to allow the searching for, active machines (Potentially SSH hosts)
 # 2. sshfs to mount SSH filesystems
 # 3. nc to interact with SSH host
-# 4. yad to give functional and usable dialog inputs
+# 4. nmap to scan other subnets
+# 5. yad to give functional and usable dialog inputs
 
 NOTINSTALLED_MSG=""						# Start with a blank message
 #1.. Look for arp=scan
@@ -714,7 +715,13 @@ if [ $? != "0" ]; then
        	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"nc\n"		# indicate not installed		
 fi
 
-#4.. Look for yad
+#4.. Look for nmap
+which nmap >>/dev/null 2>&1					# see if netcat is installed
+if [ $? != "0" ]; then
+       	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"nmap\n"		# indicate not installed		
+fi
+
+#5.. Look for yad
 
 which yad >>/dev/null 2>&1					# see if yad is installed
 if [ $? != "0" ]; then
@@ -727,7 +734,7 @@ if [ $? != "0" ]; then
 fi
 
 if [ -n "$NOTINSTALLED_MSG" ]; then
-	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"not found!\n\nInstall arp-scan,sshfs and nc\n Using\n\n 'sudo dnf install arp-scan sshfs netcat' (Fedora/RedHat)\n\n'sudo apt install arp-scan sshfs netcat' UBUNTU/Debian"
+	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"not found!\n\nInstall arp-scan,sshfs and nc\n Using\n\n 'sudo dnf install arp-scan sshfs netcat nmap' (Fedora/RedHat)\n\n'sudo apt install arp-scan sshfs netcat nmap' UBUNTU/Debian"
  
 	zenity	--error --no-wrap \
 	--title="Missing Dependancies" \
