@@ -33,7 +33,7 @@
 #------ Edit these four DEFAULT options to match your system. Alternatinvely create the $0.ini file and edit that instead and save the .ini file for next time
 _IP="10.0.1.200"					# e.g. "192.168.1.100"
 _PORT="22"						# Port to connect ssh e.g. 22 or 2222
-_SSH_OPTIONS="HostKeyAlgorithms=+ssh-dss"		# Additional options for sshfs command
+_SSH_OPTIONS="-C"		# Additional options for sshfs command
 _VOLUME="mnt/internal_sd"				# Directory to mount
 _USER="sshd"						# The User id on the SSH Host
 _PASSWORD="88888888"					# Password for the Above SSH Host User, prefix special characters, e.g.
@@ -660,10 +660,12 @@ if [ -z "$KEY" ]; then						# If key is still blank, give up trying
 fi
 
 KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
+KEY_TYPE=$(echo "$KEY" | cut -d" " -s -f2)			# extract the key type. ssh-rsa,ssh-dss etc
 KEY2SCAN=$(echo "$KEY" | cut -d" " -s -f3)			# extract the actual key
 KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
 
 if [ -n "$KEY_SCANNED" ]; then
+	KEY_OPTIONS=" -oHostKeyAlgorithms=+$KEY_TYPE "		# Set the key type
 	return 0						# Sucess = key found in known_hosts
 fi
 
@@ -679,7 +681,15 @@ return 0						# Attempt to mount
 
 }
 #---------- END check-ssh-key ------------
-export -f select-mounted select-server find-ssh-servers select-mountpoint 
+#---------- ssh-options-help  ------------
+function ssh-options-help ()
+{
+	zenity --text-info --font='monospace bold 12' --width=1000 --height=500 \
+	--title="ssh Options Help" \
+	 <<<$(sshfs -h)
+}
+#---------- END ssh-options-help  --------
+export -f select-mounted select-server find-ssh-servers select-mountpoint ssh-options-help
 
 # ------------------ End functions -------------------------------
 
@@ -761,7 +771,7 @@ fi
 
 select-mountpoint					# Decide where we are going to mount
 
-which yad >>/dev/null 2>&1					# see if yad is installed
+which yad >>/$dev/null 2>&1					# see if yad is installed
 if [ $? = "0" ]; then
 	USEYAD=true 						# Use yad if we can
 	export GDK_BACKEND=x11					# needed to make yad work correctly
@@ -801,7 +811,7 @@ fi
 		fi
 #
 # Get user input to confirm default or selected values
-InputPending=true								# Haven't got valid user input yet
+InputPending=true							# Haven't got valid user input yet
 while $InputPending
 do
 		if $USEYAD ; then						# Use zad if we can 
@@ -831,34 +841,36 @@ do
 
 # Get the input
 		_PORT=$(echo $_IP | cut -d":" -s -f2)			#extract the port from IP:PORT
-		SrvDetail=$(yad --form --width=700 --separator="|" --center --on-top --skip-taskbar --align=right --text-align=center --buttons-layout=spread --borders=25 \
+		SrvDetail=$(yad --form --width=700 --separator="|" --center --skip-taskbar --align=right --text-align=center --buttons-layout=spread --borders=25 \
 		       		--window-icon $YAD_ICON --image $YAD_ICON \
 				--title="SSH Host details" \
 				--text="\n<span><b><big><big>Enter the Host data</big>\n</big></b></span>\n" \
-				--field="IP Address of SSH Host ":CBE "$SEL_AVAILABLE_SERVERS" \
-				--field="ssh Port " "$_PORT" \
-				--field="ssh Options " "$_SSH_OPTIONS" \
-				--field="Directory to mount " "$_VOLUME" \
-				--field="User " "$_USER" \
-				--field="Password ":H "$_PASSWORD" \
+				--field="IP Address of SSH Host ":CBE \
+				--field="ssh Port " \
+				--field="ssh Options " \
+				--field="Directory to mount " \
+				--field="User " \
+				--field="Password ":H \
+		--field "ssh Options help:FBTN" \
 				--field="\n<b>Select 'Ignore' to ignore any changes here and proceed to mount with default values\n \
 				\nOtherwise select 'Mount' to accept any changes made here</b>\n":LBL \
 				--field="":LBL \
-				--button="Save as Default":2 --button="Ignore - Use Defaults":1 --button="Mount - This Server":0 \
+				--button="Save as Default":2 --button="Ignore - Use Defaults":1 --button="Mount - This Host":0 \
+				-- "$SEL_AVAILABLE_SERVERS" "$_PORT" "$_SSH_OPTIONS" "$_VOLUME" "$_USER" "$_PASSWORD" "bash -c ssh-options-help"\
 			 )
 		else  							# else revert to zenity
 
 		SrvDetail=$(zenity --forms --width=500 --title="SSH Host details" --separator="|"  \
 				--text="\nSelect Cancel or Timeout in $YADTIMEOUTDELAY Seconds will ignore any changes here and proceed to mount with default values\n" \
 				--add-entry="IP Address of SSH Host - "$_IP \
-				--add-entry="ssh Port - "$_PORT \
-				--add-entry="ssh Options - "$_SSH_OPTIONS \
-				--add-entry="Directory to mount - "$_VOLUME \
-				--add-entry="User - "$_USER \
-				--add-password="Password - "$_PASSWORD \
+				--add-entry="ssh Port - " $_PORT\
+				--add-entry="ssh Options - " $_SSH_OPTIONS \
+				--add-entry="Directory to mount - " $_VOLUME\
+				--add-entry="User - " $_USER\
+				--add-password="Password - " $_PASSWORD \
 				--default-cancel \
 				--ok-label="Mount - This Server" \
-				--cancel-label="Ignore - Use Defaults" \
+				--cancel-label="Ignore - Use Defaults" 
 			)
 		fi									# end "If yad is istalled"	
 # Check exit code and collect new variables from Vol detail if given
@@ -903,33 +915,33 @@ do
 					--image=document-save \
 					--title="Save $_PNAME.ini" \
 					--text="\n<span><b><big><big>Your Server data Input</big></big></b></span>\n" \
-					--field="IP Address of SSH Host ":RO "$t_IP" \
-					--field="ssh Port ":RO "$t_PORT" \
-					--field="ssh Options ":RO "$t_SSH_OPTIONS" \
-					--field="Directory ":RO "$t_VOLUME" \
-					--field="User ID ":RO "$t_USER" \
-					--field="Password ":RO "$t_PASSWORD" \
+					--field="IP Address of SSH Host ":RO \
+					--field="ssh Port ":RO \
+					--field="ssh Options ":RO \
+					--field="Directory ":RO \
+					--field="User ID ":RO \
+					--field="Password ":RO \
 					--field="\n\n<span><b><big>Do you want to save these values as defaults?</big></b></span>\n":LBL \
 					--field="":LBL \
 					--button="Dont save":1 --button="Save as Default":0 \
-					--timeout=$YADTIMEOUTDELAY --timeout-indicator=left
+					--timeout=$YADTIMEOUTDELAY --timeout-indicator=left \
+					-- "$t_IP" "$t_PORT" "$t_SSH_OPTIONS" "$t_VOLUME" "$t_USER" "$t_PASSWORD"
 				)
 			else
 				SP_RTN=$(zenity --question --no-wrap \
 					--title="Save $_PNAME.ini" \
 					--text="\n Your SSH Host data Input \n \
-						IP Address of SSH Host - "$t_IP"    \n \
-						ssh Port - "$t_PORT"  \n \
+						IP Address of SSH Host - "$t_IP" \n \
+						ssh Port - "$t_PORT" \n \
 						ssh Options - "$t_SSH_OPTIONS" \n \
 						Directory to mount - "$t_VOLUME" \n \
-						User ID - "$t_USER"    \n \
-						Password - "$t_PASSWORD"    \n \
+						User ID - "$t_USER" \n \
+						Password - "$t_PASSWORD" \n \
 
 						\nDo you want to save these values as defaults?    " \
 					--default-cancel \
 					--ok-label="Save as Default" \
-					--cancel-label="Dont save" \
-					--timeout=$TIMEOUTDELAY
+					--cancel-label="Dont save"
 					)
 			fi					# endif USEYAD
 
@@ -1026,12 +1038,12 @@ else							# Not yet mounted so Proceed to attempt mounting
 		fi
 # ---------- mount and trap any error message
 if [ -n "$_SSH_OPTIONS" ]; then
-	t_SSH_OPTIONS="-o$_SSH_OPTIONS"		# If there are any options add -o
+	t_SSH_OPTIONS="-o $_SSH_OPTIONS"		# If there are any options add -o and a space
 fi
-MNT_CMD="sshfs -p $_PORT "$t_SSH_OPTIONS" "$KEY_OPTIONS" -opassword_stdin,allow_other,default_permissions $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT <<< '$_PASSWORD'"
+MNT_CMD="sshfs -p $_PORT "$KEY_OPTIONS" "-o$_UID" -opassword_stdin,allow_other,default_permissions,reconnect,ServerAliveInterval=60 "$t_SSH_OPTIONS" $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT <<< '$_PASSWORD'"
 
-#echo ..
-#echo "$MNT_CMD"
+echo ..
+echo "$MNT_CMD"
 
 		show-progress "Mounting" "Attempting to mount $MNT_IP" "$MNT_CMD"
 
