@@ -19,7 +19,7 @@ Authors: Huw Hamer Powell <huw@huwpowell.com>
 
 a mntSSH.desktop file is provided (Copy to $HOME/Desktop)
 
-need to use sudo.. so run the skeleton script mntSSH which will call te script (mntSSH.sh) using sudo... Or from the CLI or Gnome Desktop
+need to use sudo.. so run the skeleton script mntSSH which will call the script (mntSSH.sh) using sudo... Or from the CLI or Gnome Desktop
 
 # Ensure that you are a valid sudoer and add this line to /etc/sudoers
 
