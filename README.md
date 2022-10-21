@@ -3,16 +3,16 @@
 
 # Purpose: 
 Check if there is an SSH Host/Server in your network and mount it as a filesystem.
-If a server is already mounted prompt and Unmount it if it is no longer required.
+If a server/host is already mounted prompt and Unmount it if it is no longer required.
 The mount point is created and destroyed after use 
 (to prevent filling the mount directory if the device is not mounted)
 
-Runs on all GNU/Linux distros (install arp-scan) (maybe required. Try without first HHP 20200513)
-UBUNTU needs arp-scan (apt install arp-scan)
+Runs on all GNU/Linux distros (install arp-scan sshfs netcat and nmap) (maybe required. Try without first)
+UBUNTU needs arp-scan and sshfs (sudo apt install arp-scan sshfs)
 
 Authors: Huw Hamer Powell <huw@huwpowell.com>
 
-1) Install arp-scan and sshfs   'sudo dnf install arp-scan sshfs'
+1) Install arp-scan netcat nmap and sshfs   'sudo dnf install arp-scan netcat nmap sshfs'
 3) If you want to use the full functionality of nice dialog boxes install yad. otherwise we default to zenity *not so nice but it works)
 4) Change the first three variables according to your configuration. Or maintain a .ini file with the three variables. Can be created by the script if neccessary
 5) Run this program at login or from your $HOME  when your network is ready
