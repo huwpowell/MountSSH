@@ -101,13 +101,16 @@ echo "">>$_PNAME.$VAREXTN
 
 echo '_IP="'"$_IP"'"		# e.g. 192.168.1.100' >>$_PNAME.$VAREXTN
 echo '_PORT="'"$_PORT"'"		# e.g. 22 or 2222' >>$_PNAME.$VAREXTN
-echo '_SSH_OPTIONS="'"$_SSH_OPTIONS"'"	# e.g. HostKeyAlgorithms=+ssh-dss' >>$_PNAME.$VAREXTN
+echo '_SSH_OPTIONS="'"$_SSH_OPTIONS"'"	# e.g. HostKeyAlgorithms=+ssh-dss or -C' >>$_PNAME.$VAREXTN
 echo '_VOLUME="'"$_VOLUME"'"		# e.g. /mnt/internal_sd' >>$_PNAME.$VAREXTN
 echo '_USER="'"$_USER"'"		# The User id ON THE SSH Host' >>$_PNAME.$VAREXTN
 echo '_PASSWORD="'"$_PASSWORD"'"	# Password for the Above SSH host User' >>$_PNAME.$VAREXTN
 echo '_MOUNT_POINT="'"$_MOUNT_POINT"'"	# Base folder for mounting (/media recommended but could be /mnt or other choice)' >>$_PNAME.$VAREXTN
 echo "">>$_PNAME.$VAREXTN
 echo "#-- Created `date` by `whoami` ----">>$_PNAME.$VAREXTN
+
+chown --reference $_PNAME $_PNAME.$VAREXTN			# Give ownership to the caller
+
 } # NOTE : The user name is not saved (commented out) to enable the hostname to be set next time around. Uncomment the line in the .ini file if a specific user name is required
 
 #-------------END save-vars-----------
@@ -135,10 +138,14 @@ function show-progress() {
 #------------ do-exit ------------------
 function do-exit () {
 
-		zenity --warning --no-wrap --width=250 --timeout=$TIMEOUTDELAY\
-			--title="Restart" \
-			--text="<span foreground='red'><big><big><b>Exiting</b></big></big></span><span><b>\n\nResart for changes to take effect</b></span>"
-		exit				# Shutdown -- Go no further
+	zenity --warning --no-wrap --width=250 --timeout=1\
+		--title="Restart" \
+		--text="<span foreground='red'><big><big><b>Restarting</b></big></big></span><span><b>\n\nResart for changes to take effect</b></span>"
+
+	_UID=$(echo $_UID|tr ',' ' ')		# Replace the comma with a space (as was passed originally)
+	exec "$_MY_PNAME" "$_UID" "$_PNAME"	# Restart the script with new possible changes in the files
+
+#		exit				# Shutdown -- Go no further
 }
 # ---------- umount and trap any error message
 
@@ -297,6 +304,7 @@ if [ $DOsave = "Y" ]; then
 	|sort -u \
 	)
 	echo "$_FILE_OUT"| sed -e '/^$/d' >$_FILE	# Save any valid input to $_FILE ignoring blanks
+	chown --reference $_PNAME $_FILE		# Give ownership to the caller
 fi
 }
 # ------------ END edit-subnets ---------
@@ -313,23 +321,28 @@ function edit-servers() {
 		|sort -u -t "," -k1,1 \
 		)				# grep extracts only Valid IP addresses and discards invalid
 
-	echo "$_FILE_OUT"| sed -e '/^$/d' >$_FILE	# Save any valid input to $_FILE ignoring blanks
-
+		echo "$_FILE_OUT"| sed -e '/^$/d' >$_FILE	# Save any valid input to $_FILE ignoring blanks
+		chown --reference $_PNAME $_FILE		# Give ownership to the caller
 	fi
 }
 # ------------ END edit-servers ---------
 #------------- edit-ports --------------------
 function edit-ports() {
 
-	_NARRATIVE="<span foreground='blue'><b><big>Enter Ports to scan in the format nn nnn nnnn\n\n</big>ie 22 222 2222\n</b>\n\nSeparate the ports with <b>ONE</b> SPACE ( ) \n\nor Put all Ports on the separate lines</span>"
+	#look for a .ports file
+	if [ ! -f $_PNAME.ports ]; then
+		echo $SCAN_PORTS >> $_PNAME.ports		# Create a .ports file with the defaults
+		chown --reference $_PNAME $_PNAME.ports		# Give ownership to the caller
+	fi
+
+	_NARRATIVE="<span foreground='blue'><b><big>Enter Ports to scan in the format nn nnn nnnn\n\n</big>ie 22 222 2222\n</b>\n\nSeparate the ports with <b>ONE</b> SPACE\n\nor Put all Ports on the separate lines</span>"
 	edit-file ports "$_NARRATIVE"
 
 	if [ $DOsave = "Y" ]; then
-		_FILE_OUT=$(echo -n "$EDIT_TXT" \
-		)
+		_FILE_OUT=$(echo -n "$EDIT_TXT")
 
-	echo "$_FILE_OUT"| sed -e '/^$/d' >$_FILE	# Save any valid input to $_FILE ignoring blanks
-
+		echo "$_FILE_OUT"| sed -e '/^$/d' >$_FILE	# Save any valid input to $_FILE ignoring blanks
+		chown --reference $_PNAME $_FILE		# Give ownership to the caller
 	fi
 }
 # ------------ END edit-ports---------
@@ -432,6 +445,7 @@ do
 					fi
 					_NEW_SERVERS=$(echo -e "$_SERVERS_FILE\n$_SUBNET_IPS"|sort -u -t "," -k1,1) # remove any duplicates
 					echo "$_NEW_SERVERS"|sed -e '/^$/d'|sort -u -t "," -k1,1 > $_PNAME.servers	# Append IPS found to Servers for later processing, Ignore blank lines
+					chown --reference $_PNAME $_PNAME.servers	# Give ownership to the caller
 		
 				fi
  			fi
@@ -441,7 +455,7 @@ do
 				--text="No subnets found in $_PNAME.subnets\n\nEdit the $_PNAME.subnets file\nand try again?"
 			if [ $? = "0" ]
 			then
-				edit-subnets				# edit the subnets file
+				edit-subnets			# edit the subnets file
 			else
 				M_PROCEED=''			# Ignore and leave 
 			fi
@@ -468,6 +482,7 @@ if [ -f $_PNAME.subnets ]; then
 fi
 
 echo -e "$_SUBNET\n$_CURRENT_SUBNETS" > $_PNAME.subnets 	# recreate .subnets Add this subnet at the top
+chown --reference $_PNAME $_PNAME.subnets			# Give ownership to the caller
 
 # Find the available Servers on the subnets
 	show-progress "Initializing" "Finding Servers on $_SUBNET" \
@@ -624,7 +639,8 @@ done
 if [ ! -z $_PNAME ] ; then
 	MOUNT_POINT_ROOT=$_MOUNT_POINT"/$_PNAME"	# Append the calling name if set as $2
 	if [ ! -d $MOUNT_POINT_ROOT ]; then
-		mkdir $MOUNT_POINT_ROOT				# make the mountpoint directory if required.
+		mkdir $MOUNT_POINT_ROOT			# make the mountpoint directory if required.
+		chown --reference $_PNAME $MOUNT_POINT_ROOT	# Give ownership to the caller
 	fi
 fi
 }
@@ -640,15 +656,18 @@ KEY_OPTIONS=""							# Turn ON Key Checking
 
 if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
 	mkdir "$KEY_SSHDIR"					# if not exist then cre8 it
+	chown --reference $_PNAME $KEY_SSHDIR			# Give ownership to the caller
 fi
 
 if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
 	touch "$KEY_HOSTS"					# if not exist cre8 it
+	chown --reference $_PNAME $KEY_HOSTS			# Give ownership to the caller
 fi
 
-KEY=$(ssh-keyscan -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+KEY=$(ssh-keyscan -H -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+
 if [ -z "$KEY" ]; then						# If default method doesnt work try dsa
-	KEY=$(ssh-keyscan -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get the dss Public key from the host
+	KEY=$(ssh-keyscan -H -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get dss Public key from the host
 fi
 
 if [ -z "$KEY" ]; then						# If key is still blank, give up trying
@@ -661,24 +680,20 @@ fi
 
 KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
 KEY_TYPE=$(echo "$KEY" | cut -d" " -s -f2)			# extract the key type. ssh-rsa,ssh-dss etc
+KEY_OPTIONS=" -oHostKeyAlgorithms=+$KEY_TYPE "			# Set the key type
 KEY2SCAN=$(echo "$KEY" | cut -d" " -s -f3)			# extract the actual key
 KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
 
-if [ -n "$KEY_SCANNED" ]; then
-	KEY_OPTIONS=" -oHostKeyAlgorithms=+$KEY_TYPE "		# Set the key type
-	return 0						# Sucess = key found in known_hosts
+if [ -z "$KEY_SCANNED" ]; then					# If we didnt find the key in known_hosts
+	zenity	--question --no-wrap \
+		--title="$KEY_IP is not known" \
+		--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+
+	if [ $? = 0 ]; then
+		echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
+	fi
 fi
-
-zenity	--question --no-wrap \
-	--title="$KEY_IP is not known" \
-	--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
-
-if [ $? = 0 ]; then
-	echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
-fi
-
 return 0						# Attempt to mount			
-
 }
 #---------- END check-ssh-key ------------
 #---------- ssh-options-help  ------------
@@ -758,6 +773,7 @@ fi
 # Since we have to run this scipt using sudo we need the actual user UID. This is set by the execution script that called us
 # The UID is passed as $arg1 i.e "./mntSSH $_ID" (see the mntSSH script) comes as 'uid=nnnn gid=nnnn'
 # We need to use awk to add the commas into it to use as input to mount
+_MY_PNAME=$0						# Get our name (for restarting later on)
 _UID=$(awk 'BEGIN{FS=" ";OFS=""} {print $1,",",$2 ;} '  <<<$1)
 _PNAME=$2						# Get the actual name of the calling user/script
 #
@@ -1033,7 +1049,8 @@ else							# Not yet mounted so Proceed to attempt mounting
 
 		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then			# Dont try to create the mount root if mount point is not set correcly
 			if [ ! -d $MOUNT_POINT ]; then
-				mkdir $MOUNT_POINT		# make the mountpoint directory if required.
+				mkdir $MOUNT_POINT	# make the mountpoint directory if required.
+				chown --reference $_PNAME $MOUNT_POINT	# Give ownership to the caller
 			fi
 		fi
 # ---------- mount and trap any error message
