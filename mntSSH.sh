@@ -33,10 +33,10 @@
 #------ Edit these four DEFAULT options to match your system. Alternatinvely create the $0.ini file and edit that instead and save the .ini file for next time
 _IP="10.0.1.200"					# e.g. "192.168.1.100"
 _PORT="22"						# Port to connect ssh e.g. 22 or 2222
-_SSH_OPTIONS="-C"		# Additional options for sshfs command
+_SSH_OPTIONS="-C"					# Additional options for sshfs command
 _VOLUME="mnt/internal_sd"				# Directory to mount
 _USER="sshd"						# The User id on the SSH Host
-_PASSWORD="88888888"					# Password for the Above SSH Host User, prefix special characters, e.g.
+_PASSWORD=""						# Password for the Above SSH Host User
 
 #------
 _MOUNT_POINT=/media					# Base folder for mounting (/media recommended but could be /mnt or other choice)
@@ -95,6 +95,8 @@ else
 	VAREXTN="$1"					# Take the extension from the arguments
 fi
 
+password-crypt "$_PASSWORD"				# Encrypt the password
+
 echo "# This file contains the variables to match your system and is included into the main script at runtime">$_PNAME.$VAREXTN	# create the file
 echo "# if this file does not exist you will get the option to create it from the defaults in the main script">>$_PNAME.$VAREXTN
 echo "">>$_PNAME.$VAREXTN
@@ -109,7 +111,9 @@ echo '_MOUNT_POINT="'"$_MOUNT_POINT"'"	# Base folder for mounting (/media recomm
 echo "">>$_PNAME.$VAREXTN
 echo "#-- Created `date` by `whoami` ----">>$_PNAME.$VAREXTN
 
-chown --reference $_PNAME $_PNAME.$VAREXTN			# Give ownership to the caller
+chown --reference $_PNAME $_PNAME.$VAREXTN		# Give ownership to the caller
+
+password-crypt "$_PASSWORD" -d				# Decrypt the password again
 
 } # NOTE : The user name is not saved (commented out) to enable the hostname to be set next time around. Uncomment the line in the .ini file if a specific user name is required
 
@@ -704,6 +708,16 @@ function ssh-options-help ()
 	 <<<$(sshfs -h)
 }
 #---------- END ssh-options-help  --------
+# --------- password-crypt ---------------
+# Encrypt/Decrypt _PASSWORD
+# Entry $1 is the string to crypt/Decrypt, $2 is -d (to DEcrypt if $2 is blank the ENcrypt
+function password-crypt ()
+{
+	if [ -n "$1" ]; then				# if we got a string to work on
+		_PASSWORD=$(echo "$1" | openssl enc -pbkdf2 -a $2 )
+	fi
+}
+# --------- END password-crypt -----------
 export -f select-mounted select-server find-ssh-servers select-mountpoint ssh-options-help
 
 # ------------------ End functions -------------------------------
@@ -784,6 +798,8 @@ fi
 if [ -f $_PNAME.last ]; then						
 	. $_PNAME.last				# load last sucessful mounted options if they exist (Overwrites .ini)
 fi
+
+password-crypt "$_PASSWORD" -d				# Decrypt the password
 
 select-mountpoint					# Decide where we are going to mount
 
@@ -1030,7 +1046,7 @@ if [[ "$IS_MOUNTED" ]] ; then
 		else									# unmount failed
 			exit 1
 		fi 									# if umount $MOUNT_POINT
-		else									# decision given to keep what is currently mounted ($ProceedToUnmount == Y)
+	else									# decision given to keep what is currently mounted ($ProceedToUnmount == Y)
 
 		zenity	--info --no-wrap \
 			--title="Retain mounted Volume" \
@@ -1041,56 +1057,57 @@ if [[ "$IS_MOUNTED" ]] ; then
 	exit 0		#Sucess
 
 else							# Not yet mounted so Proceed to attempt mounting
-
-	check-ssh-key $MNT_IP $_PORT				# See if we know the host
+	check-ssh-key $MNT_IP $_PORT			# See if we know the host
 	if [ $? != "0" ]; then
 		exit 1					# Failed key check so exit and don't attempt mount
 	fi
 
-		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then			# Dont try to create the mount root if mount point is not set correcly
-			if [ ! -d $MOUNT_POINT ]; then
-				mkdir $MOUNT_POINT	# make the mountpoint directory if required.
-				chown --reference $_PNAME $MOUNT_POINT	# Give ownership to the caller
-			fi
+	if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then			# Dont try to create the mount root if mount point is not set correcly
+		if [ ! -d $MOUNT_POINT ]; then
+			mkdir $MOUNT_POINT	# make the mountpoint directory if required.
+			chown --reference $_PNAME $MOUNT_POINT	# Give ownership to the caller
 		fi
+	fi
 # ---------- mount and trap any error message
-if [ -n "$_SSH_OPTIONS" ]; then
-	t_SSH_OPTIONS="-o $_SSH_OPTIONS"		# If there are any options add -o and a space
-fi
-MNT_CMD="sshfs -p $_PORT "$KEY_OPTIONS" "-o$_UID" -opassword_stdin,allow_other,default_permissions,reconnect,ServerAliveInterval=60 "$t_SSH_OPTIONS" $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT <<< '$_PASSWORD'"
+	if [ -n "$_SSH_OPTIONS" ]; then
+		t_SSH_OPTIONS="-o $_SSH_OPTIONS"		# If there are any options add -o and a space
+	fi
+
+MAIN_OPTIONS="allow_other,default_permissions,reconnect,ServerAliveInterval=60"
+PASSWORD_OPTIONS="-o password_stdin <<< '$_PASSWORD'"
+
+MNT_CMD="sshfs -p $_PORT $KEY_OPTIONS -o $_UID -o $MAIN_OPTIONS $t_SSH_OPTIONS $_USER@$MNT_IP:/$_VOLUME $MOUNT_POINT "
 
 echo ..
-echo "$MNT_CMD"
+echo "$MNT_CMD"		# without the password options (below)the user can then copy the output and enter the password manually
+echo ..
 
-		show-progress "Mounting" "Attempting to mount $MNT_IP" "$MNT_CMD"
-
-		ERR=$(echo "$SP_RTN" | grep -v "Created symlink")	# Read any error message
+MNT_CMD="$MNT_CMD $PASSWORD_OPTIONS"					# Add the passsword option
+	show-progress "Mounting" "Attempting to mount $MNT_IP" "$MNT_CMD"
+	ERR=$(echo "$SP_RTN" | grep -v "Created symlink")	# Read any error message
 									# The "Created symlink" message comes up the first time
-									# That we run but the mount suceeds, So ignore it
-
+									# that we run but the mount suceeds, So ignore it
 # --- end mount (any error message is in $ERR
 
-		if [ -z "$ERR" ] ; then
-			zenity	--info --no-wrap \
-				--title="Volume is Mounted" \
-				--text="Volume $MNT_IP is Mounted  \n\nProceed to use it at $MOUNT_POINT  \n\n.... Success!!" \
-				--timeout=$TIMEOUTDELAY 
+	if [ -z "$ERR" ] ; then
+		zenity	--info --no-wrap \
+			--title="Volume is Mounted" \
+			--text="Volume $MNT_IP is Mounted  \n\nProceed to use it at $MOUNT_POINT  \n\n.... Success!!" \
+			--timeout=$TIMEOUTDELAY 
 
-		save-vars "last" 					# save the as the last Host used
+	save-vars "last" 					# save the as the last Host used
 
-		else							# if mount fails #Clean UP
+	else							# if mount fails #Clean UP
 
-			if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then		# Dont remove the mount root is mount point is not set correcly
-				rmdir "$MOUNT_POINT"					# Happened during testing DUHHH
-			fi
-
-			zenity	--error --no-wrap \
-				--title="Volume is NOT Mounted" \
-				--text="Something went wrong!!...  \n\n $ERR \n\n Failed to mount SSH Host $MNT_IP at $MOUNT_POINT \ntry again  " \
+		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then		# Dont remove the mount root is mount point is not set correcly
+			rmdir "$MOUNT_POINT"					# Happened during testing DUHHH
+		fi
+		zenity	--error --no-wrap \
+			--title="Volume is NOT Mounted" \
+			--text="Something went wrong!!...  \n\n $ERR \n\n Failed to mount SSH Host $MNT_IP at $MOUNT_POINT \ntry again  " \
 #				--timeout=$TIMEOUTDELAY
-
-			exit 1
-		fi		# end if mount gave an error
+		exit 1
+	fi		# end if mount gave an error
 
 fi		# IS_MOUNTED
 exit 0
