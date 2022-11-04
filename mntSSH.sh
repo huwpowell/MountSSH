@@ -106,7 +106,8 @@ echo '_PORT="'"$_PORT"'"		# e.g. 22 or 2222' >>$_PNAME.$VAREXTN
 echo '_SSH_OPTIONS="'"$_SSH_OPTIONS"'"	# e.g. HostKeyAlgorithms=+ssh-dss or -C' >>$_PNAME.$VAREXTN
 echo '_VOLUME="'"$_VOLUME"'"		# e.g. /mnt/internal_sd' >>$_PNAME.$VAREXTN
 echo '_USER="'"$_USER"'"		# The User id ON THE SSH Host' >>$_PNAME.$VAREXTN
-echo '_PASSWORD="'"$_PASSWORD"'"	# Password for the Above SSH host User' >>$_PNAME.$VAREXTN
+echo '_PASSWORD="'"$_PASSWORD"'"	# Encrypted Password for the Above SSH host User' >>$_PNAME.$VAREXTN
+echo '# You can delete the password but do not alter it otherwise the script will fail to mount anything' >>$_PNAME.$VAREXTN
 echo '_MOUNT_POINT="'"$_MOUNT_POINT"'"	# Base folder for mounting (/media recommended but could be /mnt or other choice)' >>$_PNAME.$VAREXTN
 echo "">>$_PNAME.$VAREXTN
 echo "#-- Created `date` by `whoami` ----">>$_PNAME.$VAREXTN
@@ -374,7 +375,7 @@ do
 		fi
 		SCAN_SUBNETS=$(awk 'BEGIN{FS="\n";OFS=""} {print "FALSE\n",$1 ;} '<<<$SCAN_SUBNETS)
 
-		OUT=$(yad --list --geometry=500x500 --separator="|" --on-top --close-on-unfocus --skip-taskbar --align=right --text-align=center --buttons-layout=spread --borders=25 \
+		OUT=$(yad --list --geometry=500x700 --separator="|" --on-top --close-on-unfocus --skip-taskbar --align=right --text-align=center --buttons-layout=spread --borders=25 \
 			--window-icon $YAD_ICON --image $YAD_ICON \
 			--checklist \
 			--multiple \
@@ -422,15 +423,11 @@ do
 
 				for S_IP in $(echo "$_SUBNET_IPS")
 				do
-					for NC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
-						_TMP=$(ping -c 1 -W 2 $S_IP)		# See if the IP is alive
-						if [ $? = "0" ]; then			# If the IP is alive
-							echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing
-							_TMP=$(nc -n -zw1 $S_IP $NC_PORT 2>&1)
-							if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH Host
-							then
-								_SUBNET_SERVERS=$(echo -n "$S_IP\n$_SUBNET_SERVERS")
-							fi
+					for SC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
+						echo "# Scanning ... $S_IP - $SC_PORT"	# Tell zenity what we are doing
+						_TMP=$(nc -n -zw1 $S_IP $SC_PORT 2>&1)
+						if [ $? = "0" ]; then			# if nc connected sucessfully add this IP as an SSH Host
+							_SUBNET_SERVERS=$(echo -n "$S_IP\n$_SUBNET_SERVERS")
 						fi
 					done
 				done> >(zenity --progress --pulsate  --width=250 --auto-close --no-cancel \
@@ -441,7 +438,7 @@ do
 
 					_SUBNET_IPS=$(echo -e "$_SUBNET_SERVERS" \
 					|awk -v sname="Remote Scanned" 'BEGIN{FS=" ";OFS=""} {print $1,",",sname;} ' \
-							)
+					)
 
 					_SERVERS_FILE=""
 					if [ -f $_PNAME.servers ]; then # Get all from the existing .servers file
@@ -508,20 +505,14 @@ chown --reference $_PNAME $_PNAME.subnets			# Give ownership to the caller
 	# Zenity progress this for loop
 	for S_IP in $(echo "$_LIVE_IPS" | awk 'BEGIN{FS=",";OFS=""} {print $1 ;} '  )
 	do
-		_TMP=$(ping -c 1 -W 2 $S_IP)			# See if the IP is alive
-		if [ $? = "0" ]; then				# If the IP is Alice
-			for NC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
-				echo "# Scanning ... $S_IP - $NC_PORT"	# Tell zenity what we are doing 
-				_TMP=$(nc -n -zw1 $S_IP $NC_PORT 2>&1)
-				if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH host
-				then
-					_SERVERS=$(echo -e "$S_IP:$NC_PORT\n$_SERVERS")
-				fi
-			done
-		else
-			SP_RTN=""				# Show nothing found
-		fi
-
+		for SC_PORT in $(echo "$SCAN_PORTS"); do	# Scan all possible ports
+			echo "# Scanning ... $S_IP - $SC_PORT"	# Tell zenity what we are doing 
+			_TMP=$(nc -n -zw1 $S_IP $SC_PORT 2>&1)
+			if [ $? = "0" ]				# if nc connected sucessfully add this IP as an SSH host
+			then
+				_SERVERS=$(echo -e "$S_IP:$SC_PORT\n$_SERVERS")
+			fi
+		done
 	done> >(zenity --progress --pulsate  --width=250 --auto-close --no-cancel \
 	--title="Scanning for SSH hosts" \
 	--text="Scanning .." \
@@ -649,8 +640,83 @@ if [ ! -z $_PNAME ] ; then
 fi
 }
 #---------- END select-mountpoint --------
+#
 #---------- check-ssh-key ----------------
 function check-ssh-key ()
+{
+local KEY_IP=$1							# Get the IP Address in question
+local KEY_PORT=$2						# and the port
+local KEY_SSHDIR=`pwd`"/.ssh"					# The .ssh directory path
+local KEY_HOSTS="$KEY_SSHDIR/known_hosts"			# the known-hosts file
+KEY_OPTIONS=""							# Turn ON Key Checking
+
+if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
+	mkdir "$KEY_SSHDIR"					# if not exist then cre8 it
+	chown --reference $_PNAME $KEY_SSHDIR			# Give ownership to the caller
+	chmod 700 $KEY_SSHDIR					# Secure from other users
+fi
+
+if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
+	touch "$KEY_HOSTS"					# if not exist cre8 it
+	chown --reference $_PNAME $KEY_HOSTS			# Give ownership to the caller
+fi
+
+KEY=$(ssh-keyscan -H -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+
+if [ -z "$KEY" ]; then						# If default method doesnt work try dsa
+	KEY=$(ssh-keyscan -H -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get dss Public key from the host
+fi
+
+if [ -z "$KEY" ]; then						# If key is still blank, give up trying
+	KEY_OPTIONS=" -oStrictHostKeyChecking=no "		# Turn off Key Checking for this mount
+	zenity	--question --no-wrap \
+		--title="Key for $KEY_IP not found" \
+		--text="The SSH Key for $KEY_IP:$KEY_PORT could not be read\n\nDo you want to try to mount anyway?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+	return $?						# Return Yes/No
+fi
+
+KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
+KEY_TYPE=$(echo "$KEY" |grep -m1 ^| cut -d" " -s -f2)		# extract the key type. ssh-rsa,ssh-dss etc from the First found
+KEY_OPTIONS="-oUserKnownHostsFile=$KEY_HOSTS -oHostKeyAlgorithms=+$KEY_TYPE "	# Set the key type
+KEY2SCAN=$(echo "$KEY" |grep -m1 ^| cut -d" " -s -f3)		# extract the first actual key
+KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
+
+if [ -z "$KEY_SCANNED" ]; then					# If we didnt find the key in known_hosts
+	zenity	--question --no-wrap \
+		--title="$KEY_IP is not known" \
+		--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+
+	if [ $? = 0 ]; then
+		echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
+	fi
+else
+	HOST_SCAN=$(ssh-keygen -F $KEY_IP -f $KEY_HOSTS | cut -d" " -s -f3 2>/dev/null)	# See if this IP/KEY is in the known_hosts file
+	if [ -z "HOST_SCAN" ]; then				# Didn't find it? Then add the Port# and try again
+		HOST_SCAN=$(ssh-keygen -F [$KEY_IP]:$KEY_PORT -f $KEY_HOSTS | cut -d" " -s -f3 2>/dev/null)	# See if this IP/KEY is in the known_hosts file
+	fi
+
+	KEY_SCANNED=$(echo "$HOST_SCAN" | grep "$KEY2SCAN") 	# See if the key is in the same
+	
+	if [ -z "$KEY_SCANNED" ]; then				# The key is in known_hosts with a different IP
+		zenity	--question --no-wrap \
+			--title="$KEY_IP has changed" \
+			--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\n \
+However it's key exists with a different IP\n\n \
+Do you want to exchange the previous IP/KEY with $KEY_IP and keep $KEY_IP as a permenently known host?\n\n \
+If you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\n \
+to create the key and Try again"
+
+		if [ $? = 0 ]; then
+			KEY_HOSTS_FILE=$(cat $KEY_HOSTS | grep -v $KEY2SCAN)		# Read the file dropping the existing key
+			echo -e "$KEY_HOSTS_FILE\n$KEY" > "$KEY_HOSTS"	# Add this one as a known host
+		fi
+	fi
+fi
+return 0						# Attempt to mount			
+}
+#---------- END check-ssh-key ------------
+#---------- check-ssh-key-old ----------------
+function check-ssh-key-old ()
 {
 local KEY_IP=$1							# Get the IP Address in question
 local KEY_PORT=$2						# and the port
@@ -699,7 +765,7 @@ if [ -z "$KEY_SCANNED" ]; then					# If we didnt find the key in known_hosts
 fi
 return 0						# Attempt to mount			
 }
-#---------- END check-ssh-key ------------
+#---------- END check-ssh-key-old ------------
 #---------- ssh-options-help  ------------
 function ssh-options-help ()
 {
@@ -731,7 +797,8 @@ export -f select-mounted select-server find-ssh-servers select-mountpoint ssh-op
 # 2. sshfs to mount SSH filesystems
 # 3. nc to interact with SSH host
 # 4. nmap to scan other subnets
-# 5. yad to give functional and usable dialog inputs
+# 5. openssl for password encryption
+# 6. yad to give functional and usable dialog inputs
 
 NOTINSTALLED_MSG=""						# Start with a blank message
 #1.. Look for arp=scan
@@ -760,7 +827,13 @@ if [ $? != "0" ]; then
        	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"nmap\n"		# indicate not installed		
 fi
 
-#5.. Look for yad
+#5.. Look for openssl
+which openssl >>/dev/null 2>&1					# see if openssl is installed
+if [ $? != "0" ]; then
+       	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"openssl\n"		# indicate not installed		
+fi
+
+#6.. Look for yad
 
 which yad >>/dev/null 2>&1					# see if yad is installed
 if [ $? != "0" ]; then
@@ -773,7 +846,7 @@ if [ $? != "0" ]; then
 fi
 
 if [ -n "$NOTINSTALLED_MSG" ]; then
-	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"not found!\n\nInstall arp-scan,sshfs and nc\n Using\n\n 'sudo dnf install arp-scan sshfs netcat nmap' (Fedora/RedHat)\n\n'sudo apt install arp-scan sshfs netcat nmap' UBUNTU/Debian"
+	NOTINSTALLED_MSG=$NOTINSTALLED_MSG"not found!\n\nInstall arp-scan,sshfs and nc\n Using\n\n 'sudo dnf install arp-scan sshfs netcat nmap openssl' (Fedora/RedHat)\n\n'sudo apt install arp-scan sshfs netcat nmap openssl' UBUNTU/Debian"
  
 	zenity	--error --no-wrap \
 	--title="Missing Dependancies" \
