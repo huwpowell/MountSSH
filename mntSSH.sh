@@ -39,12 +39,14 @@ _USER="sshd"						# The User id on the SSH Host
 _PASSWORD=""						# Password for the Above SSH Host User
 
 #------
-_MOUNT_POINT=/media					# Base folder for mounting (/media recommended but could be /mnt or other choice)
+_MOUNT_POINT_ROOT=/media				# Base folder for mounting (/media recommended but could be /mnt or other choice)
 
 SCAN_PORTS="22 2222"					# Default ports (Maintain .ports file to override)
 NC_PORT=22						# Which port to use to connect during scanning
 TIMEOUTDELAY=5						# timeout for dialogs and messages. (in seconds)
 YADTIMEOUTDELAY=$(($TIMEOUTDELAY*4))			# Extra time for completing the initial form and where necessary
+KEY_HASHED="-H"						# Set to -H to hash the key ID in .ssh/known_hosts
+KEY_HASHED=""						# Comment out this line to hash the key ID
 
 ######## !! DON'T MODIFY ANYTHING BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING !!!!!!! ##########
 ######## !! DON'T MODIFY ANYTHING BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING !!!!!!! ##########
@@ -108,7 +110,7 @@ echo '_VOLUME="'"$_VOLUME"'"		# e.g. /mnt/internal_sd' >>$_PNAME.$VAREXTN
 echo '_USER="'"$_USER"'"		# The User id ON THE SSH Host' >>$_PNAME.$VAREXTN
 echo '_PASSWORD="'"$_PASSWORD"'"	# Encrypted Password for the Above SSH host User' >>$_PNAME.$VAREXTN
 echo '# You can delete the password but do not alter it otherwise the script will fail to mount anything' >>$_PNAME.$VAREXTN
-echo '_MOUNT_POINT="'"$_MOUNT_POINT"'"	# Base folder for mounting (/media recommended but could be /mnt or other choice)' >>$_PNAME.$VAREXTN
+echo '_MOUNT_POINT_ROOT="'"$_MOUNT_POINT_ROOT"'" # Base folder for mounting (/media recommended but could be /mnt or other choice)' >>$_PNAME.$VAREXTN
 echo "">>$_PNAME.$VAREXTN
 echo "#-- Created `date` by `whoami` ----">>$_PNAME.$VAREXTN
 
@@ -597,57 +599,68 @@ function select-server() {
 #-------- select-mountpoint ------
 function select-mountpoint ()
 {
-while [ ! -d "$_MOUNT_POINT" ]; do				# Does the mount point root exist?
-		Q_OUT=$(zenity --list \
-			--title="Mount Point Not defined" \
-			--text "Select the root mount point" \
-			--radiolist \
-			--column "sel" \
-			--column "Mount Point" \
-			TRUE "/media" \
-			FALSE "/mnt" \
-			FALSE "Other"
+while [ ! -d "$_MOUNT_POINT_ROOT" ]; do				# Does the mount point root exist?
+	NEW_MOUNT_POINT_ROOT=$(zenity --list \
+		--title="Mount Point Root Not defined" \
+		--text "Select the root mount point" \
+		--radiolist \
+		--column "sel" \
+		--column "Mount Point" \
+		TRUE "/media" \
+		FALSE "/mnt" \
+		FALSE "Other"
+		)
+	if [ -z "$NEW_MOUNT_POINT_ROOT" ]; then				# Most likely cancel was selected or dialog closed
+		NEW_MOUNT_POINT_ROOT="Other"				# set to Other and manually collect input
+	fi
+
+	if [ "$NEW_MOUNT_POINT_ROOT" = "Other" ]; then
+
+		NEW_MOUNT_POINT_ROOT=$(zenity --forms --width=500 --height=200 --title="Mount Point Not defined" \
+					--text="\nSelect the root mount point\n\nSuggested choices are '/media or /mnt'" \
+					--add-entry="Root Mount Point - " \
+					--cancel-label="Exit" \
+					--ok-label="Select This Mount Point" \
+					)
+		NEW_MOUNT_POINT_ROOT="/$NEW_MOUNT_POINT_ROOT"			# Add the root slash
+	fi
+
+	if [ "$NEW_MOUNT_POINT_ROOT" != "/" ]; then				# Did we get any input?
+		if [ ! -d "$NEW_MOUNT_POINT_ROOT" ]; then			# Does the root mount point exist?
+			$(zenity --question --title="Root Mount Point does not exist" \
+			--width=350 \
+			--text="\nRoot mount point does not exist\n\nDo you want to create $NEW_MOUNT_POINT_ROOT" \
+			--cancel-label="Exit" \
+			--ok-label="Create Mount Point Root" \
 			)
-		if [ -z $Q_OUT ]; then				# Most likely cancel was selected or dialog closed
-			Q_OUT="Other"				# set to Other and manually collect input
+			if [ ! $? = "0" ]; then					# OK not Selected
+				exit						# Exit whole process if No
+			else
+				mkdir $NEW_MOUNT_POINT_ROOT			# Cre8 the root mount point
+			fi
 		fi
-	
-	NEW_MOUNT_POINT="$Q_OUT"
-
-	if [ "$NEW_MOUNT_POINT" = "Other" ]; then
-
-		NEW_MOUNT_POINT=$(zenity --forms --width=500 --height=200 --title="Mount Point Not defined" \
-				--text="\nSelect the root mount point\n\nSuggested choices are '/media or /mnt'" \
-				--add-entry="Root Mount Point - "$_MOUNT_POINT \
-				--cancel-label="Exit" \
-				--ok-label="Select This Mount Point" \
-			)
-	fi
-
-	if [ -n "$NEW_MOUNT_POINT" ]; then
-		_MOUNT_POINT="$NEW_MOUNT_POINT"			# Get the user input
 	else
-		exit							# Exit whole process if no input
+		exit								# Exit whole process if no input
 	fi
+	_MOUNT_POINT_ROOT=$NEW_MOUNT_POINT_ROOT					# Keep the resultnged root mount point
 done
 
 if [ ! -z $_PNAME ] ; then
-	MOUNT_POINT_ROOT=$_MOUNT_POINT"/$_PNAME"	# Append the calling name if set as $2
+	MOUNT_POINT_ROOT=$_MOUNT_POINT_ROOT"/$_PNAME"		# Append the calling name if set as $2
 	if [ ! -d $MOUNT_POINT_ROOT ]; then
-		mkdir $MOUNT_POINT_ROOT			# make the mountpoint directory if required.
+		mkdir $MOUNT_POINT_ROOT				# make the mountpoint directory if required.
 		chown --reference $_PNAME $MOUNT_POINT_ROOT	# Give ownership to the caller
 	fi
 fi
 }
 #---------- END select-mountpoint --------
-#
 #---------- check-ssh-key ----------------
 function check-ssh-key ()
 {
 local KEY_IP=$1							# Get the IP Address in question
 local KEY_PORT=$2						# and the port
 local KEY_SSHDIR=`pwd`"/.ssh"					# The .ssh directory path
-local KEY_HOSTS="$KEY_SSHDIR/known_hosts"			# the known-hosts file
+KNOWN_HOSTS="$KEY_SSHDIR/known_hosts"			# the known-hosts file
 KEY_OPTIONS=""							# Turn ON Key Checking
 
 if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
@@ -656,15 +669,17 @@ if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
 	chmod 700 $KEY_SSHDIR					# Secure from other users
 fi
 
-if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
-	touch "$KEY_HOSTS"					# if not exist cre8 it
-	chown --reference $_PNAME $KEY_HOSTS			# Give ownership to the caller
+if [ ! -f $KNOWN_HOSTS ]; then					# Does the known-hosts file exist?
+	touch "$KNOWN_HOSTS"					# if not exist cre8 it
+	chown --reference $_PNAME $KNOWN_HOSTS			# Give ownership to the caller
 fi
 
-KEY=$(ssh-keyscan -H -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+KEY=$(ssh-keyscan $KEY_HASHED -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
+HOST_FINGERPRINT=$(ssh-keyscan $KEY_HASHED -p $KEY_PORT $KEY_IP 2>/dev/null | ssh-keygen  -l -f - 2>/dev/null) # Get Fingerprint from the host
 
 if [ -z "$KEY" ]; then						# If default method doesnt work try dsa
-	KEY=$(ssh-keyscan -H -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get dss Public key from the host
+	KEY=$(ssh-keyscan $KEY_HASHED -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get dss Public key from the host
+	HOST_FINGERPRINT=$(ssh-keyscan $KEY_HASHED -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null | ssh-keygen  -l -f - 2>/dev/null) # Get Fingerprint from the host
 fi
 
 if [ -z "$KEY" ]; then						# If key is still blank, give up trying
@@ -675,97 +690,56 @@ if [ -z "$KEY" ]; then						# If key is still blank, give up trying
 	return $?						# Return Yes/No
 fi
 
-KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
+KNOWN_HOSTS_FILE=$(cat $KNOWN_HOSTS)				# Read the file
 KEY_TYPE=$(echo "$KEY" |grep -m1 ^| cut -d" " -s -f2)		# extract the key type. ssh-rsa,ssh-dss etc from the First found
-KEY_OPTIONS="-oUserKnownHostsFile=$KEY_HOSTS -oHostKeyAlgorithms=+$KEY_TYPE "	# Set the key type
 KEY2SCAN=$(echo "$KEY" |grep -m1 ^| cut -d" " -s -f3)		# extract the first actual key
-KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
+KEY_SCANNED=$(echo "$KNOWN_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
+FILE_FINGERPRINT=$(echo "$KEY_SCANNED" | ssh-keygen  -l -f - 2>/dev/null) # Get the fingerprint from the file
+
+KEY_OPTIONS="-oUserKnownHostsFile=$KNOWN_HOSTS -oHostKeyAlgorithms=+$KEY_TYPE "	# Set the key type
 
 if [ -z "$KEY_SCANNED" ]; then					# If we didnt find the key in known_hosts
 	zenity	--question --no-wrap \
 		--title="$KEY_IP is not known" \
-		--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
+		--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\n \
+The host key fingerprint is \n $HOST_FINGERPRINT \n\n \
+Do you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
 
 	if [ $? = 0 ]; then
-		echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
+		echo "$KEY" >> "$KNOWN_HOSTS"			# Add this one as a known host
 	fi
 else
-	HOST_SCAN=$(ssh-keygen -F $KEY_IP -f $KEY_HOSTS | cut -d" " -s -f3 2>/dev/null)	# See if this IP/KEY is in the known_hosts file
-	if [ -z "HOST_SCAN" ]; then				# Didn't find it? Then add the Port# and try again
-		HOST_SCAN=$(ssh-keygen -F [$KEY_IP]:$KEY_PORT -f $KEY_HOSTS | cut -d" " -s -f3 2>/dev/null)	# See if this IP/KEY is in the known_hosts file
+	HOST_SCAN1=$(ssh-keygen -F $KEY_IP -f $KNOWN_HOSTS )	# See if this IP/KEY is known
+	if [ $? = "0" ]; then
+		HOST_SCAN=$(echo -n "$HOST_SCAN1" |grep -v "found:")
+	else						# Didn't find it? Then add the Port# and try again
+		HOST_SCAN2=$(ssh-keygen -F [$KEY_IP]:$KEY_PORT -f $KNOWN_HOSTS)
+		if [ $? = "0" ]; then 			# See if this IP:PORT/KEY is known
+			HOST_SCAN=$(echo -n "$HOST_SCAN2" |grep -v "found:")
+		fi
 	fi
-
 	KEY_SCANNED=$(echo "$HOST_SCAN" | grep "$KEY2SCAN") 	# See if the key is in the same
 	
 	if [ -z "$KEY_SCANNED" ]; then				# The key is in known_hosts with a different IP
 		zenity	--question --no-wrap \
 			--title="$KEY_IP has changed" \
-			--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\n \
+			--text="The SSH host $KEY_IP:$KEY_PORT is a known host\n\n \
 However it's key exists with a different IP\n\n \
+The host key fingerprint is \n $HOST_FINGERPRINT \n\n \
+The key fingerprint on file is \n $FILE_FINGERPRINT \n\n \
 Do you want to exchange the previous IP/KEY with $KEY_IP and keep $KEY_IP as a permenently known host?\n\n \
-If you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\n \
+If you do try to mount and it fails (probably with a timeout) then Connect to the host (with ssh from the command line)\n \
 to create the key and Try again"
 
 		if [ $? = 0 ]; then
-			KEY_HOSTS_FILE=$(cat $KEY_HOSTS | grep -v $KEY2SCAN)		# Read the file dropping the existing key
-			echo -e "$KEY_HOSTS_FILE\n$KEY" > "$KEY_HOSTS"	# Add this one as a known host
+			KNOWN_HOSTS_FILE=$(cat $KNOWN_HOSTS | grep -v $KEY2SCAN)		# Read the file dropping the existing key
+			echo -e "$KNOWN_HOSTS_FILE\n$KEY" > "$KNOWN_HOSTS"	# Add this one as a known host
 		fi
 	fi
 fi
 return 0						# Attempt to mount			
 }
 #---------- END check-ssh-key ------------
-#---------- check-ssh-key-old ----------------
-function check-ssh-key-old ()
-{
-local KEY_IP=$1							# Get the IP Address in question
-local KEY_PORT=$2						# and the port
-local KEY_SSHDIR="./.ssh"					# The .ssh directory path
-local KEY_HOSTS="$KEY_SSHDIR/known_hosts"			# the known-hosts file
-KEY_OPTIONS=""							# Turn ON Key Checking
-
-if [ ! -d "$KEY_SSHDIR" ]; then					# Does the .ssh directory exist?
-	mkdir "$KEY_SSHDIR"					# if not exist then cre8 it
-	chown --reference $_PNAME $KEY_SSHDIR			# Give ownership to the caller
-fi
-
-if [ ! -f $KEY_HOSTS ]; then					# Does the known-hosts file exist?
-	touch "$KEY_HOSTS"					# if not exist cre8 it
-	chown --reference $_PNAME $KEY_HOSTS			# Give ownership to the caller
-fi
-
-KEY=$(ssh-keyscan -H -p $KEY_PORT $KEY_IP 2>/dev/null)		# Get the default Public key from the host
-
-if [ -z "$KEY" ]; then						# If default method doesnt work try dsa
-	KEY=$(ssh-keyscan -H -t dsa -p $KEY_PORT $KEY_IP 2>/dev/null) # Get dss Public key from the host
-fi
-
-if [ -z "$KEY" ]; then						# If key is still blank, give up trying
-	KEY_OPTIONS=" -oStrictHostKeyChecking=no "		# Turn off Key Checking for this mount
-	zenity	--question --no-wrap \
-		--title="Key for $KEY_IP not found" \
-		--text="The SSH Key for $KEY_IP:$KEY_PORT could not be read\n\nDo you want to try to mount anyway?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
-	return $?						# Return Yes/No
-fi
-
-KEY_HOSTS_FILE=$(cat $KEY_HOSTS)				# Read the file
-KEY_TYPE=$(echo "$KEY" | cut -d" " -s -f2)			# extract the key type. ssh-rsa,ssh-dss etc
-KEY_OPTIONS=" -oHostKeyAlgorithms=+$KEY_TYPE "			# Set the key type
-KEY2SCAN=$(echo "$KEY" | cut -d" " -s -f3)			# extract the actual key
-KEY_SCANNED=$(echo "$KEY_HOSTS_FILE" | grep "$KEY2SCAN") 	#See if the key is in the known_hosts
-
-if [ -z "$KEY_SCANNED" ]; then					# If we didnt find the key in known_hosts
-	zenity	--question --no-wrap \
-		--title="$KEY_IP is not known" \
-		--text="The SSH host $KEY_IP:$KEY_PORT is not a known host\n\nDo you want to add it as a permenently known host?\n\nIf you do try to mount and it fails (probably with a timeout) then\nConnect to the host (with ssh from the command line)\nto create the key and Try again"
-
-	if [ $? = 0 ]; then
-		echo "$KEY" >> "$KEY_HOSTS"			# Add this one as a known host
-	fi
-fi
-return 0						# Attempt to mount			
-}
-#---------- END check-ssh-key-old ------------
 #---------- ssh-options-help  ------------
 function ssh-options-help ()
 {
@@ -874,9 +848,7 @@ fi
 
 password-crypt "$_PASSWORD" -d				# Decrypt the password
 
-select-mountpoint					# Decide where we are going to mount
-
-which yad >>/$dev/null 2>&1					# see if yad is installed
+which yad >>/dev/null 2>&1					# see if yad is installed
 if [ $? = "0" ]; then
 	USEYAD=true 						# Use yad if we can
 	export GDK_BACKEND=x11					# needed to make yad work correctly
@@ -1066,6 +1038,7 @@ do
 		|tr -d '[:space:]')				# Get the IP address only from the input (remember we exchanged the ' ' for '-' when we formatted the list
 	
 		InputPending=false				# got the input that we wanted, None of the fields are blank, moved them into the variables and continue
+		select-mountpoint				# Define the root mount point
 
 		if [[ "$DOsave_vars" = "Y" ]]; then		# save the input as default for next time
 			save-vars "ini"
@@ -1156,8 +1129,9 @@ echo "$MNT_CMD"		# without the password options (below)the user can then copy th
 echo ..
 
 MNT_CMD="$MNT_CMD $PASSWORD_OPTIONS"					# Add the passsword option
+
 	show-progress "Mounting" "Attempting to mount $MNT_IP" "$MNT_CMD"
-	ERR=$(echo "$SP_RTN" | grep -v "Created symlink")	# Read any error message
+	ERR=$(echo "$SP_RTN" | grep -v "Created symlink")		# Read any error message
 									# The "Created symlink" message comes up the first time
 									# that we run but the mount suceeds, So ignore it
 # --- end mount (any error message is in $ERR
@@ -1168,12 +1142,12 @@ MNT_CMD="$MNT_CMD $PASSWORD_OPTIONS"					# Add the passsword option
 			--text="Volume $MNT_IP is Mounted  \n\nProceed to use it at $MOUNT_POINT  \n\n.... Success!!" \
 			--timeout=$TIMEOUTDELAY 
 
-	save-vars "last" 					# save the as the last Host used
+	save-vars "last" 						# save the as the last Host used
 
-	else							# if mount fails #Clean UP
+	else								# if mount fails #Clean UP
 
-		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then		# Dont remove the mount root is mount point is not set correcly
-			rmdir "$MOUNT_POINT"					# Happened during testing DUHHH
+		if [ "$MOUNT_POINT" != "$MOUNT_POINT_ROOT" ]; then	# Dont remove the mount root is mount point is not set correcly
+			rmdir "$MOUNT_POINT"				# Happened during testing DUHHH
 		fi
 		zenity	--error --no-wrap \
 			--title="Volume is NOT Mounted" \
